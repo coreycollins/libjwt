@@ -7,6 +7,11 @@
 
 #include <check.h>
 
+#include <openssl/bio.h>
+#include <openssl/rsa.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+
 #include <jwt.h>
 
 START_TEST(test_jwt_encode_fp)
@@ -96,6 +101,42 @@ START_TEST(test_jwt_encode_hs256)
 
 	free(out);
 
+	jwt_free(jwt);
+}
+END_TEST
+
+START_TEST(test_jwt_encode_rs256)
+{
+	RSA* rsa = NULL;
+	rsa = RSA_generate_key(2048, RSA_F4, NULL, NULL);
+
+	jwt_t *jwt = NULL;
+	int ret = 0;
+	char *out;
+
+	ret = jwt_new(&jwt);
+	ck_assert_int_eq(ret, 0);
+	ck_assert(jwt != NULL);
+
+	ret = jwt_add_grant(jwt, "iss", "files.cyphre.com");
+	ck_assert_int_eq(ret, 0);
+
+	ret = jwt_add_grant(jwt, "sub", "user0");
+	ck_assert_int_eq(ret, 0);
+
+	ret = jwt_add_grant(jwt, "ref", "XXXX-YYYY-ZZZZ-AAAA-CCCC");
+	ck_assert_int_eq(ret, 0);
+
+	ret = jwt_set_alg_rsa(jwt, JWT_ALG_RS256, rsa);
+	ck_assert_int_eq(ret, 0);
+
+	out = jwt_encode_str(jwt);
+	ck_assert(out != NULL);
+
+	printf("%s\n", out);
+
+	free(out);
+	RSA_free(rsa);
 	jwt_free(jwt);
 }
 END_TEST
@@ -259,6 +300,7 @@ Suite *libjwt_suite(void)
 	tcase_add_test(tc_core, test_jwt_encode_hs256);
 	tcase_add_test(tc_core, test_jwt_encode_hs384);
 	tcase_add_test(tc_core, test_jwt_encode_hs512);
+	tcase_add_test(tc_core, test_jwt_encode_rs256);
 	tcase_add_test(tc_core, test_jwt_encode_change_alg);
 	tcase_add_test(tc_core, test_jwt_encode_invalid);
 

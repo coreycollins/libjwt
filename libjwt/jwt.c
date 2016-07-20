@@ -24,6 +24,11 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/buffer.h>
+#include <openssl/rsa.h>
+#include <openssl/pem.h>
+#include <openssl/sha.h>
+#include <openssl/rand.h>
+#include <openssl/err.h>
 
 #include <jansson.h>
 
@@ -34,6 +39,7 @@
 struct jwt {
 	jwt_alg_t alg;
 	unsigned char *key;
+	EVP_PKEY *sign;
 	int key_len;
 	json_t *grants;
 };
@@ -49,6 +55,8 @@ static const char *jwt_alg_str(jwt_alg_t alg)
 		return "HS384";
 	case JWT_ALG_HS512:
 		return "HS512";
+	case JWT_ALG_RS256:
+		return "RS256";
 	}
 
 	return NULL; // LCOV_EXCL_LINE
@@ -64,6 +72,8 @@ static int jwt_str_alg(jwt_t *jwt, const char *alg)
 		jwt->alg = JWT_ALG_HS384;
 	else if (!strcasecmp(alg, "HS512"))
 		jwt->alg = JWT_ALG_HS512;
+	else if (!strcasecmp(alg, "RS256"))
+		jwt->alg = JWT_ALG_RS256;
 	else
 		return EINVAL;
 
@@ -81,6 +91,8 @@ static int jwt_alg_key_len(jwt_alg_t alg)
 		return 48;
 	case JWT_ALG_HS512:
 		return 64;
+	case JWT_ALG_RS256:
+		return 167987;
 	}
 
 	return -1; // LCOV_EXCL_LINE
@@ -94,6 +106,11 @@ static void jwt_scrub_key(jwt_t *jwt)
 
 		free(jwt->key);
 		jwt->key = NULL;
+	}
+
+	if(!jwt->sign) {
+			EVP_PKEY_free(jwt->sign);
+			jwt->sign = NULL;
 	}
 
 	jwt->key_len = 0;
@@ -126,13 +143,34 @@ int jwt_set_alg(jwt_t *jwt, jwt_alg_t alg, unsigned char *key, int len)
 
 		memcpy(jwt->key, key, key_len);
 		break;
-
 	default:
 		return EINVAL;
 	}
 
 	jwt->alg = alg;
 	jwt->key_len = key_len;
+
+	return 0;
+}
+
+int jwt_set_alg_rsa(jwt_t *jwt, jwt_alg_t alg, RSA *rsa)
+{
+	/* No matter what happens here, we do this. */
+	jwt_scrub_key(jwt);
+
+	switch (alg) {
+  case JWT_ALG_RS256:
+		jwt->sign = EVP_PKEY_new();
+		EVP_PKEY_assign_RSA(jwt->sign, RSAPrivateKey_dup(rsa));
+		if (!jwt->sign) {
+			return ENOMEM; // LCOV_EXCL_LINE
+		}
+		break;
+	default:
+		return EINVAL;
+	}
+
+	jwt->alg = alg;
 
 	return 0;
 }
@@ -315,6 +353,54 @@ static int jwt_sign_sha_hmac(jwt_t *jwt, BIO *out, const EVP_MD *alg,
 	return 0;
 }
 
+static int jwt_sign_sha_rsa(jwt_t *jwt, BIO *out, const EVP_MD *alg,
+			     const char *str)
+{
+	unsigned char *sig;
+	size_t sig_len;
+
+	int result = -1;
+
+	// BIO *bufio;
+	// RSA *rsa;
+	//
+	// bufio = BIO_new_mem_buf((void*)jwt->key, jwt->key_len);
+	// PEM_read_bio_RSAPrivateKey(bufio, &rsa, 0, NULL);
+	// BIO_free_all(bufio);
+	sig = NULL;
+  EVP_MD_CTX* ctx = NULL;
+
+	do{
+			ctx = EVP_MD_CTX_create();
+			EVP_DigestInit_ex( ctx, alg, NULL );
+      EVP_DigestSignInit(ctx, NULL, alg, NULL, jwt->sign);
+      EVP_DigestSignUpdate(ctx, (const unsigned char *)str, strlen(str));
+
+			size_t req = 0;
+      EVP_DigestSignFinal(ctx, NULL, &req);
+
+			sig = OPENSSL_malloc(req);
+			sig_len = req;
+
+      if ( !EVP_DigestSignFinal( ctx, sig, &sig_len ) ) {
+              ERR_print_errors_fp( stdout );
+							break;
+      }
+
+			BIO_write(out, sig, sig_len);
+			BIO_flush(out);
+
+			result = 0;
+	} while(0);
+
+	if(ctx) {
+		EVP_MD_CTX_destroy(ctx);
+		ctx = NULL;
+	}
+
+	return result;
+}
+
 static int jwt_sign(jwt_t *jwt, BIO *out, const char *str)
 {
 	switch (jwt->alg) {
@@ -327,6 +413,8 @@ static int jwt_sign(jwt_t *jwt, BIO *out, const char *str)
 		return jwt_sign_sha_hmac(jwt, out, EVP_sha384(), str);
 	case JWT_ALG_HS512:
 		return jwt_sign_sha_hmac(jwt, out, EVP_sha512(), str);
+	case JWT_ALG_RS256:
+		return jwt_sign_sha_rsa(jwt, out, EVP_sha256(), str);
 	}
 
 	return EINVAL; // LCOV_EXCL_LINE

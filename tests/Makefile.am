@@ -6,7 +6,7 @@ TESTS =			\
 
 check_PROGRAMS = $(TESTS)
 
-AM_CPPFLAGS = -I$(top_srcdir)/include
-AM_CFLAGS = -Wall $(CHECK_CFLAGS)
-AM_LDFLAGS = -L$(top_srcdir)/libjwt
-LDADD = -ljwt $(CHECK_LIBS)
+AM_CPPFLAGS = -I$(top_srcdir)/include $(OPENSSL_INCLUDES)
+AM_CFLAGS = -Wall $(CHECK_CFLAGS) $(OPENSSL_CFLAGS)
+AM_LDFLAGS = -L$(top_srcdir)/libjwt $(OPENSSL_LDFLAGS)
+LDADD = -ljwt $(CHECK_LIBS) $(OPENSSL_LIBS)
